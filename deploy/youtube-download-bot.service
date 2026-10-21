@@ -4,6 +4,7 @@
 # 3. Создайте каталог данных: sudo install -d -o youtube-bot -g youtube-bot -m 700 /var/lib/youtube-download-bot
 # 4. Конфиг положите в /etc/youtube-download-bot.env (по образцу .env.example),
 #    в нём задайте WORK_DIR=/var/lib/youtube-download-bot/work
+#    (файл сессии MTProto по умолчанию ляжет рядом: /var/lib/youtube-download-bot/mtproto-session.txt)
 # 5. sudo cp deploy/youtube-download-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
 # 6. sudo systemctl enable --now youtube-download-bot
 

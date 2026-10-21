@@ -2,9 +2,15 @@ import type { AppConfig } from '../config.js';
 import { UnsupportedVideoError } from '../errors.js';
 import type { VideoMetadata } from '../types.js';
 import { normalizeMetadata } from '../youtube/metadata-normalize.js';
+import { networkArgs, ytdlpNetworkOptions, type YtDlpNetworkOptions } from './args.js';
 import { runProcess } from './process.js';
 
-export function buildMetadataArgs(videoId: string, nodePath: string, ffmpegLocation?: string): string[] {
+export function buildMetadataArgs(
+  videoId: string,
+  nodePath: string,
+  ffmpegLocation?: string,
+  network?: YtDlpNetworkOptions,
+): string[] {
   return [
     '--ignore-config',
     '--no-playlist',
@@ -20,6 +26,7 @@ export function buildMetadataArgs(videoId: string, nodePath: string, ffmpegLocat
     '--extractor-retries',
     '2',
     '--no-cache-dir',
+    ...networkArgs(network),
     ...(ffmpegLocation ? ['--ffmpeg-location', ffmpegLocation] : []),
     '--dump-single-json',
     `https://www.youtube.com/watch?v=${videoId}`,
@@ -42,13 +49,28 @@ function parseJson(stdout: string): unknown {
 }
 
 export interface FetchMetadataOptions {
-  config: Pick<AppConfig, 'ytdlpBin' | 'metadataTimeoutMs' | 'ffmpegLocation' | 'workDir'>;
+  config: Pick<
+    AppConfig,
+    | 'ytdlpBin'
+    | 'metadataTimeoutMs'
+    | 'ffmpegLocation'
+    | 'workDir'
+    | 'ytdlpCookiesFile'
+    | 'ytdlpSleepRequestsSec'
+    | 'ytdlpImpersonate'
+    | 'ytdlpLimitRate'
+  >;
   videoId: string;
   signal?: AbortSignal;
 }
 
 export async function fetchVideoMetadata(options: FetchMetadataOptions): Promise<VideoMetadata> {
-  const args = buildMetadataArgs(options.videoId, process.execPath, options.config.ffmpegLocation);
+  const args = buildMetadataArgs(
+    options.videoId,
+    process.execPath,
+    options.config.ffmpegLocation,
+    ytdlpNetworkOptions(options.config),
+  );
   const result = await runProcess({
     bin: options.config.ytdlpBin,
     args,

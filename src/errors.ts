@@ -92,6 +92,18 @@ export class TelegramStartupError extends Error {
   }
 }
 
+export class MtprotoStartupError extends Error {
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    const flood = detail.match(/A wait of (\d+) seconds is required/);
+    const reason = flood
+      ? `Telegram ставит flood-лимит на повторный вход бота: ждать ещё ${Math.ceil(Number(flood[1]) / 60)} мин.`
+      : `Проверьте TELEGRAM_API_ID/TELEGRAM_API_HASH и сеть.`;
+    super(`MTProto-сессия бота не поднялась: ${detail}. ${reason}`, { cause });
+    this.name = 'MtprotoStartupError';
+  }
+}
+
 export class UnsupportedVideoError extends Error {
   constructor(
     public readonly kind: 'live' | 'playlist' | 'no_video' | 'no_audio' | 'format_unavailable' | 'invalid_metadata',

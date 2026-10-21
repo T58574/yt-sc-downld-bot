@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { run, type RunnerHandle } from '@grammyjs/runner';
 import { Bot, type BotError } from 'grammy';
+import type { Update } from 'grammy/types';
 import type { AppConfig } from '../config.js';
 import { TelegramStartupError, userMessageForError } from '../errors.js';
 import type { Logger } from '../logger.js';
@@ -11,6 +12,7 @@ import { parseYouTubeUrl, urlRejectionMessage } from '../youtube/url.js';
 import { fetchVideoMetadata } from '../ytdlp/metadata.js';
 import { parseCallbackData } from './callbacks.js';
 import { createDownloadTask } from './job.js';
+import type { MtprotoClient } from './mtproto-client.js';
 import { StatusMessage } from './progress-message.js';
 import {
   cancelKeyboard,
@@ -27,6 +29,7 @@ import {
   renderVideoInfo,
 } from './render.js';
 import { SelectionStore } from './selection-store.js';
+import { createMediaSender } from './sender.js';
 import { toTelegramSignal } from './telegram-signal.js';
 
 const SELECTION_TTL_MS = 30 * 60 * 1000;
@@ -55,6 +58,7 @@ export interface StartBotOptions {
   config: AppConfig;
   logger: Logger;
   workRoot: string;
+  mtproto?: MtprotoClient;
 }
 
 export interface BotRuntime {
@@ -67,9 +71,18 @@ function ignoreFailure(promise: Promise<unknown>): void {
   void promise.catch(() => undefined);
 }
 
+/** Тип апдейта для логов: message, callback_query и прочие. */
+function updateType(update: Update): string {
+  for (const key of Object.keys(update)) {
+    if (key !== 'update_id') return key;
+  }
+  return 'unknown';
+}
+
 export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
-  const { config, logger, workRoot } = options;
+  const { config, logger, workRoot, mtproto } = options;
   const bot = new Bot(config.botToken, { client: { apiRoot: config.telegramApiRoot } });
+  const sender = createMediaSender({ api: bot.api, ...(mtproto ? { mtproto } : {}), config, logger });
   const selections = new SelectionStore(SELECTION_TTL_MS, MAX_SELECTIONS);
   const tasks = new Map<string, TaskState>();
   const busyChats = new Set<number>();
@@ -107,6 +120,11 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
     maxQueueSize: config.maxQueueSize,
     logger,
     onEvent: handleQueueEvent,
+  });
+
+  bot.use(async (ctx, next) => {
+    logger.debug('update_received', { updateId: ctx.update.update_id, type: updateType(ctx.update) });
+    await next();
   });
 
   bot.use(async (ctx, next) => {
@@ -261,7 +279,7 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
       videoId: action.videoId,
       selection: action.selection,
       config,
-      api: bot.api,
+      sender,
       logger,
       workRoot,
       onMetadata: (fresh) => {

@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@grammyjs/runner": "2.0.3",
-    "grammy": "1.46.0"
+    "grammy": "1.46.0",
+    "telegram": "2.26.22"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

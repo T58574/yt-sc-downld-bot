@@ -117,3 +117,46 @@ describe('buildMetadataArgs', () => {
     expect(args[args.length - 1]).toBe(`https://www.youtube.com/watch?v=${VIDEO_ID}`);
   });
 });
+
+describe('флаги защиты от блокировок YouTube', () => {
+  it('добавляет cookies, паузу, маскировку и лимит скорости', () => {
+    const network = { cookiesFile: '/etc/yt/cookies.txt', sleepRequestsSec: 2, impersonate: 'chrome', limitRate: '5M' };
+    const args = buildDownloadArgs({
+      videoId: VIDEO_ID,
+      selection: { kind: 'audio' },
+      selector: AUDIO_FORMAT_SELECTOR,
+      workDir: WORK_DIR,
+      nodePath: '/usr/bin/node',
+      ytdlpBin: 'yt-dlp',
+      network,
+    });
+    expect(args[args.indexOf('--cookies') + 1]).toBe('/etc/yt/cookies.txt');
+    expect(args[args.indexOf('--sleep-requests') + 1]).toBe('2');
+    expect(args[args.indexOf('--impersonate') + 1]).toBe('chrome');
+    expect(args[args.indexOf('--limit-rate') + 1]).toBe('5M');
+  });
+
+  it('те же флаги идут в запрос метаданных', () => {
+    const args = buildMetadataArgs(VIDEO_ID, '/usr/bin/node', undefined, {
+      cookiesFile: '/etc/yt/cookies.txt',
+      sleepRequestsSec: 1,
+    });
+    expect(args[args.indexOf('--cookies') + 1]).toBe('/etc/yt/cookies.txt');
+    expect(args[args.indexOf('--sleep-requests') + 1]).toBe('1');
+  });
+
+  it('без настроек лишних флагов не добавляет', () => {
+    const args = buildDownloadArgs({
+      videoId: VIDEO_ID,
+      selection: { kind: 'audio' },
+      selector: AUDIO_FORMAT_SELECTOR,
+      workDir: WORK_DIR,
+      nodePath: '/usr/bin/node',
+      ytdlpBin: 'yt-dlp',
+    });
+    expect(args).not.toContain('--cookies');
+    expect(args).not.toContain('--sleep-requests');
+    expect(args).not.toContain('--impersonate');
+    expect(args).not.toContain('--limit-rate');
+  });
+});

@@ -1,4 +1,3 @@
-import type { Api } from 'grammy';
 import type { AppConfig } from '../config.js';
 import { FileTooLargeError, TaskCancelledError, UnsupportedVideoError } from '../errors.js';
 import type { Logger } from '../logger.js';
@@ -6,8 +5,9 @@ import type { MediaSelection, Task, TaskContext } from '../types.js';
 import { createTaskDir, removeTaskDir } from '../files.js';
 import { downloadMedia } from '../ytdlp/download.js';
 import { fetchVideoMetadata } from '../ytdlp/metadata.js';
+import { ytdlpNetworkOptions } from '../ytdlp/args.js';
 import { buildVideoQualities, AUDIO_FORMAT_SELECTOR } from '../youtube/formats.js';
-import { sendMedia } from './send.js';
+import type { MediaSender } from './sender.js';
 
 function throwIfAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
@@ -21,14 +21,14 @@ export interface DownloadTaskFactoryOptions {
   videoId: string;
   selection: MediaSelection;
   config: AppConfig;
-  api: Api;
+  sender: MediaSender;
   logger: Logger;
   workRoot: string;
   onMetadata?: (metadata: import('../types.js').VideoMetadata) => void;
 }
 
 export function createDownloadTask(options: DownloadTaskFactoryOptions): Task {
-  const { id, ownerId, chatId, videoId, selection, config, api, logger, workRoot, onMetadata } = options;
+  const { id, ownerId, chatId, videoId, selection, config, sender, logger, workRoot, onMetadata } = options;
   const label = `${videoId}/${selection.kind === 'audio' ? 'mp3' : `${selection.height}p`}`;
 
   return {
@@ -81,6 +81,7 @@ export function createDownloadTask(options: DownloadTaskFactoryOptions): Task {
           nodePath: process.execPath,
           ytdlpBin: config.ytdlpBin,
           ...(config.ffmpegLocation ? { ffmpegLocation: config.ffmpegLocation } : {}),
+          network: ytdlpNetworkOptions(config),
           expectedStreams,
           timeoutMs: config.downloadTimeoutMs,
           signal: context.signal,
@@ -93,14 +94,15 @@ export function createDownloadTask(options: DownloadTaskFactoryOptions): Task {
         }
 
         context.report({ stage: 'uploading' });
-        await sendMedia({
-          api,
+        await sender.send({
           chatId,
           file,
           metadata,
           selection,
-          config,
           signal: context.signal,
+          onProgress: (percent) => {
+            context.report({ stage: 'uploading', percent });
+          },
         });
         logger.info('task_uploaded', { taskId: id, videoId, sizeBytes: file.sizeBytes, extension: file.extension });
       } finally {

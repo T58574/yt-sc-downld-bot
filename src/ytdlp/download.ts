@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { MediaSelection, ProgressUpdate } from '../types.js';
 import { OutputFileMissingError } from '../errors.js';
 import { findOutputFile } from '../files.js';
+import { networkArgs, type YtDlpNetworkOptions } from './args.js';
 import { runProcess } from './process.js';
 import { parseYtDlpLine } from './progress.js';
 
@@ -104,6 +105,7 @@ export interface BuildDownloadArgsOptions {
   nodePath: string;
   ytdlpBin: string;
   ffmpegLocation?: string;
+  network?: YtDlpNetworkOptions;
 }
 
 export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
@@ -138,6 +140,7 @@ export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
     `temp:${options.workDir}`,
     '--output',
     join(options.workDir, '%(id)s.%(ext)s'),
+    ...networkArgs(options.network),
     ...(options.ffmpegLocation ? ['--ffmpeg-location', options.ffmpegLocation] : []),
   ];
 

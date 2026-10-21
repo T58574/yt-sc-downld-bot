@@ -89,4 +89,80 @@ describe('loadConfig', () => {
     expect(loadConfig(env({ MAX_CONCURRENT_DOWNLOADS: '4' })).warnings.join(' ')).toContain('параллельных');
     expect(loadConfig(env({ TELEGRAM_API_ROOT: 'http://127.0.0.1:8081', TELEGRAM_UPLOAD_LIMIT_MB: '1900' })).warnings).toEqual([]);
   });
+
+  it('требует api_id и api_hash вместе', () => {
+    expect(() => loadConfig(env({ TELEGRAM_API_ID: '123456' }))).toThrow(/вместе/);
+    expect(() => loadConfig(env({ TELEGRAM_API_HASH: '0123456789abcdef0123456789abcdef' }))).toThrow(/вместе/);
+    expect(() => loadConfig(env({ TELEGRAM_API_ID: 'abc', TELEGRAM_API_HASH: 'x'.repeat(32) }))).toThrow(/числом/);
+    expect(() => loadConfig(env({ TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: 'short' }))).toThrow(/32/);
+  });
+
+  it('с MTProto поднимает лимит отправки до 2000 МиБ', () => {
+    const config = loadConfig(
+      env({ TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: '0123456789abcdef0123456789abcdef' }),
+    );
+    expect(config.mtprotoEnabled).toBe(true);
+    expect(config.mtprotoApiId).toBe(123456);
+    expect(config.uploadLimitMb).toBe(2000);
+    expect(config.uploadLimitBytes).toBe(2000 * 1024 * 1024);
+    expect(config.botApiUploadLimitBytes).toBe(50 * 1024 * 1024);
+    expect(config.mtprotoThresholdBytes).toBe(50 * 1024 * 1024);
+    expect(config.mtprotoSessionFile.endsWith('data/mtproto-session.txt')).toBe(true);
+    expect(config.warnings).toEqual([]);
+  });
+
+  it('без MTProto лимит остаётся облачным', () => {
+    const config = loadConfig(env());
+    expect(config.mtprotoEnabled).toBe(false);
+    expect(config.uploadLimitMb).toBe(50);
+    expect(config.botApiUploadLimitBytes).toBe(50 * 1024 * 1024);
+  });
+
+  it('порог MTProto не может превышать общий лимит', () => {
+    const api = { TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: '0123456789abcdef0123456789abcdef' };
+    expect(() => loadConfig(env({ ...api, TELEGRAM_UPLOAD_LIMIT_MB: '100', MTPROTO_THRESHOLD_MB: '500' }))).toThrow(
+      /MTPROTO_THRESHOLD_MB/,
+    );
+    const config = loadConfig(env({ ...api, MTPROTO_THRESHOLD_MB: '10' }));
+    expect(config.mtprotoThresholdBytes).toBe(10 * 1024 * 1024);
+  });
+
+  it('порог по умолчанию не превышает общий лимит', () => {
+    const api = { TELEGRAM_API_ID: '123456', TELEGRAM_API_HASH: '0123456789abcdef0123456789abcdef' };
+    const config = loadConfig(
+      env({ ...api, TELEGRAM_API_ROOT: 'http://127.0.0.1:8081', TELEGRAM_UPLOAD_LIMIT_MB: '50' }),
+    );
+    expect(config.mtprotoThresholdBytes).toBe(50 * 1024 * 1024);
+    expect(config.uploadLimitMb).toBe(50);
+  });
+
+  it('локальный Bot API поднимает лимит Bot API до 2000 МиБ', () => {
+    const config = loadConfig(env({ TELEGRAM_API_ROOT: 'http://127.0.0.1:8081' }));
+    expect(config.botApiUploadLimitBytes).toBe(2000 * 1024 * 1024);
+    expect(config.uploadLimitMb).toBe(2000);
+    expect(config.warnings).toEqual([]);
+  });
+
+  it('настройки защиты YouTube читаются из окружения', () => {
+    const config = loadConfig(
+      env({
+        YTDLP_COOKIES_FILE: '/etc/yt/cookies.txt',
+        YTDLP_SLEEP_REQUESTS: '2',
+        YTDLP_IMPERSONATE: 'chrome',
+        YTDLP_LIMIT_RATE: '5M',
+      }),
+    );
+    expect(config.ytdlpCookiesFile).toBe('/etc/yt/cookies.txt');
+    expect(config.ytdlpSleepRequestsSec).toBe(2);
+    expect(config.ytdlpImpersonate).toBe('chrome');
+    expect(config.ytdlpLimitRate).toBe('5M');
+  });
+
+  it('по умолчанию пауза между запросами секунда, остальное выключено', () => {
+    const config = loadConfig(env());
+    expect(config.ytdlpSleepRequestsSec).toBe(1);
+    expect(config.ytdlpCookiesFile).toBeUndefined();
+    expect(config.ytdlpImpersonate).toBeUndefined();
+    expect(config.ytdlpLimitRate).toBeUndefined();
+  });
 });

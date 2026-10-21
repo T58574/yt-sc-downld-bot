@@ -1,8 +1,9 @@
-import { loadConfig } from './config.js';
+import { loadConfig, withBotApiLimit, type AppConfig } from './config.js';
 import { asError } from './errors.js';
 import { cleanupStaleTaskDirs, prepareWorkRoot } from './files.js';
 import { createLogger, redactText, type Logger } from './logger.js';
-import { startBot } from './telegram/bot.js';
+import { startBot, type BotRuntime } from './telegram/bot.js';
+import { createMtprotoClient, type MtprotoClient } from './telegram/mtproto-client.js';
 import { verifyTools } from './ytdlp/tools.js';
 
 const REQUIRED_NODE_MAJOR = 24;
@@ -24,6 +25,38 @@ function reportStartupFailure(error: unknown): void {
   process.exitCode = 1;
 }
 
+/**
+ * Поднимает MTProto-клиента, если заданы api_id/api_hash: он нужен для файлов больше 50 МиБ.
+ * Если Telegram не пускает (flood-лимит на повторный вход, сеть) — бот продолжает
+ * работать через Bot API, но лимит отправки урезается до его возможностей.
+ */
+async function startMtproto(
+  config: AppConfig,
+  logger: Logger,
+): Promise<{ client?: MtprotoClient; config: AppConfig }> {
+  if (!config.mtprotoEnabled || config.mtprotoApiId === undefined || config.mtprotoApiHash === undefined) {
+    return { config };
+  }
+  try {
+    const client = await createMtprotoClient({
+      apiId: config.mtprotoApiId,
+      apiHash: config.mtprotoApiHash,
+      botToken: config.botToken,
+      sessionFile: config.mtprotoSessionFile,
+      logger,
+    });
+    logger.info('mtproto_ready', {
+      apiId: config.mtprotoApiId,
+      thresholdBytes: config.mtprotoThresholdBytes,
+      sessionFile: config.mtprotoSessionFile,
+    });
+    return { client, config };
+  } catch (error) {
+    logger.warn('mtproto_unavailable', { error: asError(error).message });
+    return { config: withBotApiLimit(config) };
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const logger: Logger = createLogger(config.logLevel);
@@ -38,7 +71,21 @@ async function main(): Promise<void> {
   if (removedDirs > 0) logger.info('stale_task_dirs_removed', { count: removedDirs });
 
   const tools = await verifyTools(config, logger);
-  const runtime = await startBot({ config, logger, workRoot });
+  const mtproto = await startMtproto(config, logger);
+  const effectiveConfig = mtproto.config;
+  let runtime: BotRuntime;
+  try {
+    runtime = await startBot({
+      config: effectiveConfig,
+      logger,
+      workRoot,
+      ...(mtproto.client ? { mtproto: mtproto.client } : {}),
+    });
+  } catch (error) {
+    // Не оставляем открытое MTProto-соединение: иначе процесс не завершится.
+    await mtproto.client?.close().catch(() => undefined);
+    throw error;
+  }
   logger.info('startup_complete', {
     node: process.versions.node,
     workDir: workRoot,
@@ -46,7 +93,8 @@ async function main(): Promise<void> {
     ffmpeg: tools.ffmpeg,
     concurrency: config.maxConcurrentDownloads,
     queueLimit: config.maxQueueSize,
-    uploadLimitMb: config.uploadLimitMb,
+    uploadLimitMb: effectiveConfig.uploadLimitMb,
+    mtproto: effectiveConfig.mtprotoEnabled && Boolean(mtproto.client),
   });
 
   let shuttingDown = false;
@@ -63,6 +111,9 @@ async function main(): Promise<void> {
       await runtime.shutdown();
     } catch (error) {
       logger.error('shutdown_failed', { error });
+    }
+    if (mtproto.client) {
+      await mtproto.client.close().catch((error: unknown) => logger.warn('mtproto_close_failed', { error }));
     }
     clearTimeout(forceTimer);
     logger.info('shutdown_complete', { signal });

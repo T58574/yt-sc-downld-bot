@@ -89,8 +89,10 @@ function renderStage(update: ProgressUpdate, selection: MediaSelection): string 
       return selection.kind === 'audio' ? '🎧 Конвертация в MP3…' : '🎛 Обработка видео…';
     case 'merging':
       return '🎬 Объединение видео и аудио…';
-    case 'uploading':
-      return '📤 Отправка в Telegram…';
+    case 'uploading': {
+      const percent = update.percent === undefined ? undefined : `${update.percent.toFixed(1)}%`;
+      return `📤 Отправка в Telegram${percent ? ` · ${percent}` : '…'}`;
+    }
   }
 }
 
