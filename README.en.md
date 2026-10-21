@@ -116,7 +116,7 @@ All variables go into `.env` (locally) or `/etc/youtube-download-bot.env` (syste
 | `FFMPEG_LOCATION` | no | — | directory for `yt-dlp --ffmpeg-location`; defaults to the `FFMPEG_BIN` directory when the path is absolute |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
 
-At startup the bot checks the Node.js version and verifies that `yt-dlp`, `ffmpeg`, and `ffprobe` are available, removes stale task directories from previous runs, and clears the webhook with dropped pending updates (long polling is used).
+At startup the bot checks the Node.js version and verifies that `yt-dlp`, `ffmpeg`, and `ffprobe` are available, removes stale task directories from previous runs, and clears the webhook with dropped pending updates (long polling is used). If the Bot API is unreachable, startup aborts after 30 seconds with a clear log message (systemd restarts the process) instead of hanging silently.
 
 ## Running on a server (systemd)
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { run, type RunnerHandle } from '@grammyjs/runner';
 import { Bot, type BotError } from 'grammy';
 import type { AppConfig } from '../config.js';
-import { userMessageForError } from '../errors.js';
+import { TelegramStartupError, userMessageForError } from '../errors.js';
 import type { Logger } from '../logger.js';
 import { TaskQueue, type QueueEvent } from '../queue.js';
 import type { MediaSelection, Task, VideoMetadata } from '../types.js';
@@ -27,11 +27,13 @@ import {
   renderVideoInfo,
 } from './render.js';
 import { SelectionStore } from './selection-store.js';
+import { toTelegramSignal } from './telegram-signal.js';
 
 const SELECTION_TTL_MS = 30 * 60 * 1000;
 const MAX_SELECTIONS = 200;
 const QUEUE_DRAIN_TIMEOUT_MS = 10_000;
 const POLLING_TIMEOUT_SEC = 30;
+const STARTUP_API_TIMEOUT_MS = 30_000;
 const ALLOWED_UPDATES: ReadonlyArray<'message' | 'callback_query'> = ['message', 'callback_query'];
 const METADATA_PLACEHOLDER = '🔎 Получаю информацию о видео…';
 const BUSY_REPLY = '⏳ Уже получаю данные по предыдущей ссылке. Дождитесь ответа.';
@@ -275,12 +277,24 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
     logger.error('update_failed', { error: error.error, updateId: error.ctx.update.update_id });
   });
 
-  await bot.init();
-  await bot.api.deleteWebhook({ drop_pending_updates: true });
-  await bot.api.setMyCommands([
-    { command: 'start', description: 'Начало работы' },
-    { command: 'help', description: 'Как пользоваться ботом' },
-  ]);
+  // bot.init() в grammY ретраит сетевые ошибки бесконечно, поэтому ограничиваем
+  // весь стартовый обмен с Bot API общим таймаутом — иначе процесс висит молча.
+  const startupSignal = AbortSignal.timeout(STARTUP_API_TIMEOUT_MS);
+  const telegramSignal = toTelegramSignal(startupSignal);
+  try {
+    await bot.init(telegramSignal);
+    await bot.api.deleteWebhook({ drop_pending_updates: true }, telegramSignal);
+    await bot.api.setMyCommands(
+      [
+        { command: 'start', description: 'Начало работы' },
+        { command: 'help', description: 'Как пользоваться ботом' },
+      ],
+      undefined,
+      telegramSignal,
+    );
+  } catch (error) {
+    throw new TelegramStartupError(config.telegramApiRoot, startupSignal.aborted, error);
+  }
 
   const runner: RunnerHandle = run(bot, {
     runner: {

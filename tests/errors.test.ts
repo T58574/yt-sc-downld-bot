@@ -4,6 +4,7 @@ import {
   FileTooLargeError,
   OutputFileMissingError,
   ProcessTimeoutError,
+  TelegramStartupError,
   ToolNotFoundError,
   UnsupportedVideoError,
   classifyYtDlpFailure,
@@ -58,5 +59,21 @@ describe('userMessageForError', () => {
   it('не раскрывает детали неизвестной ошибки', () => {
     expect(userMessageForError(new Error('internal stack'), LIMIT)).toContain('логах сервера');
     expect(userMessageForError('строка', LIMIT)).not.toContain('строка');
+  });
+});
+
+describe('TelegramStartupError', () => {
+  it('подсказывает про адрес Bot API при таймауте', () => {
+    const error = new TelegramStartupError('http://127.0.0.1:8081', true, new DOMException('timed out', 'TimeoutError'));
+    expect(error.message).toContain('http://127.0.0.1:8081');
+    expect(error.message).toContain('не ответил');
+    expect(error.timedOut).toBe(true);
+  });
+
+  it('подсказывает про токен при 401 и передаёт детали в остальных случаях', () => {
+    expect(new TelegramStartupError('https://api.telegram.org', false, { error_code: 401 }).message).toContain('BOT_TOKEN');
+    const error = new TelegramStartupError('http://127.0.0.1:8081', false, new Error('fetch failed'));
+    expect(error.message).toContain('fetch failed');
+    expect(error.name).toBe('TelegramStartupError');
   });
 });

@@ -67,6 +67,31 @@ export class TelegramSendError extends Error {
   }
 }
 
+function telegramErrorCode(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('error_code' in error)) return undefined;
+  const code = Number((error as { error_code?: unknown }).error_code);
+  return Number.isFinite(code) ? code : undefined;
+}
+
+export class TelegramStartupError extends Error {
+  constructor(
+    public readonly apiRoot: string,
+    public readonly timedOut: boolean,
+    cause: unknown,
+  ) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(
+      telegramErrorCode(cause) === 401
+        ? `Telegram отклонил BOT_TOKEN (${detail}). Проверьте токен в конфиге.`
+        : timedOut
+          ? `Bot API по адресу ${apiRoot} не ответил за отведённое время. Проверьте TELEGRAM_API_ROOT и доступность сервера.`
+          : `Bot API по адресу ${apiRoot} недоступен: ${detail}`,
+      { cause },
+    );
+    this.name = 'TelegramStartupError';
+  }
+}
+
 export class UnsupportedVideoError extends Error {
   constructor(
     public readonly kind: 'live' | 'playlist' | 'no_video' | 'no_audio' | 'format_unavailable' | 'invalid_metadata',
