@@ -1,0 +1,46 @@
+# Пример unit-файла systemd для постоянной работы бота.
+# 1. Скопируйте репозиторий в /opt/youtube-download-bot и соберите: npm ci && npm run build
+# 2. Создайте пользователя: sudo useradd --system --home /var/lib/youtube-download-bot youtube-bot
+# 3. Создайте каталог данных: sudo install -d -o youtube-bot -g youtube-bot -m 700 /var/lib/youtube-download-bot
+# 4. Конфиг положите в /etc/youtube-download-bot.env (по образцу .env.example),
+#    в нём задайте WORK_DIR=/var/lib/youtube-download-bot/work
+# 5. sudo cp deploy/youtube-download-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# 6. sudo systemctl enable --now youtube-download-bot
+
+[Unit]
+Description=Telegram bot for downloading YouTube videos as MP3/MP4
+Documentation=https://github.com/T58574/youtube-download-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youtube-bot
+Group=youtube-bot
+WorkingDirectory=/opt/youtube-download-bot
+EnvironmentFile=/etc/youtube-download-bot.env
+ExecStart=/usr/local/bin/node dist/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+KillMode=control-group
+
+# Файлы проекта только для чтения, запись — лишь в каталог с временными файлами.
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/youtube-download-bot
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=2G
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target
