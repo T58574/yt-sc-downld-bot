@@ -36,6 +36,8 @@ export type MediaSelection =
   | { kind: 'audio' }
   | { kind: 'video'; height: number };
 
+export type MediaProvider = 'youtube' | 'soundcloud';
+
 export type DownloadStage =
   | 'queued'
   | 'metadata'

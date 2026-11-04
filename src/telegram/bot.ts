@@ -6,12 +6,12 @@ import type { AppConfig } from '../config.js';
 import { TelegramStartupError, userMessageForError } from '../errors.js';
 import type { Logger } from '../logger.js';
 import { TaskQueue, type QueueEvent } from '../queue.js';
-import type { MediaSelection, Task, VideoMetadata } from '../types.js';
+import type { MediaProvider, MediaSelection, Task, VideoMetadata } from '../types.js';
 import { buildVideoQualities, hasDownloadableAudio } from '../youtube/formats.js';
-import { parseYouTubeUrl, urlRejectionMessage } from '../youtube/url.js';
-import { fetchVideoMetadata } from '../ytdlp/metadata.js';
+import { parseMediaLink } from '../links.js';
+import { fetchUrlMetadata, fetchVideoMetadata } from '../ytdlp/metadata.js';
 import { parseCallbackData } from './callbacks.js';
-import { createDownloadTask } from './job.js';
+import { createDownloadTask, createSoundCloudTask } from './job.js';
 import type { MtprotoClient } from './mtproto-client.js';
 import { StatusMessage } from './progress-message.js';
 import {
@@ -39,9 +39,10 @@ const POLLING_TIMEOUT_SEC = 30;
 const STARTUP_API_TIMEOUT_MS = 30_000;
 const ALLOWED_UPDATES: ReadonlyArray<'message' | 'callback_query'> = ['message', 'callback_query'];
 const METADATA_PLACEHOLDER = '🔎 Получаю информацию о видео…';
+const SOUNDCLOUD_METADATA_PLACEHOLDER = '🔎 Получаю информацию о треке…';
 const BUSY_REPLY = '⏳ Уже получаю данные по предыдущей ссылке. Дождитесь ответа.';
 const STALE_SELECTION_REPLY = 'Эта клавиатура устарела. Пришлите ссылку заново.';
-const TEXT_ONLY_REPLY = 'Пришлите ссылку на видео YouTube обычным текстом.';
+const TEXT_ONLY_REPLY = 'Пришлите ссылку на видео YouTube или трек SoundCloud обычным текстом.';
 
 interface MetadataBox {
   current?: VideoMetadata;
@@ -49,6 +50,7 @@ interface MetadataBox {
 
 interface TaskState {
   chatId: number;
+  provider: MediaProvider;
   selection: MediaSelection;
   metadata: MetadataBox;
   status: StatusMessage;
@@ -105,7 +107,11 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
         break;
       case 'failed':
         state?.status.finish(
-          renderFailed(state.metadata.current, state.selection, userMessageForError(event.error, config.uploadLimitBytes)),
+          renderFailed(
+            state.metadata.current,
+            state.selection,
+            userMessageForError(event.error, config.uploadLimitBytes, state.provider),
+          ),
         );
         break;
       case 'cancelled':
@@ -153,9 +159,9 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
     if (chatId === undefined || userId === undefined) return;
-    const parsed = parseYouTubeUrl(ctx.message.text);
+    const parsed = parseMediaLink(ctx.message.text);
     if (!parsed.ok) {
-      await ctx.reply(urlRejectionMessage(parsed.reason));
+      await ctx.reply(parsed.message);
       return;
     }
     if (busyChats.has(chatId)) {
@@ -163,16 +169,69 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
       return;
     }
 
+    const link = parsed.value;
+    const isSoundCloud = link.provider === 'soundcloud';
     busyChats.add(chatId);
-    const placeholder = await ctx.reply(METADATA_PLACEHOLDER);
+    const placeholder = await ctx.reply(isSoundCloud ? SOUNDCLOUD_METADATA_PLACEHOLDER : METADATA_PLACEHOLDER);
     try {
+      if (link.provider === 'soundcloud') {
+        const metadata = await fetchUrlMetadata({
+          config: { ...config, workDir: workRoot },
+          url: link.soundcloud.url,
+          fallbackTitle: 'SoundCloud track',
+        });
+        logger.info('soundcloud_metadata_ready', {
+          chatId,
+          trackId: metadata.id,
+          durationSec: metadata.durationSec,
+          formats: metadata.formats.length,
+          shortLink: link.soundcloud.shortLink,
+        });
+
+        if (!metadata.hasAudio) {
+          await ctx.api.editMessageText(
+            chatId,
+            placeholder.message_id,
+            renderError('У этого трека нет аудиодорожки. Скачивать нечего.'),
+            { parse_mode: 'HTML' },
+          );
+          return;
+        }
+
+        const taskId = randomUUID();
+        const selection: MediaSelection = { kind: 'audio' };
+        const metadataBox: MetadataBox = { current: metadata };
+        const status = new StatusMessage(
+          bot.api,
+          chatId,
+          placeholder.message_id,
+          (update) => renderProgress(metadataBox.current, selection, update),
+          cancelKeyboard(taskId),
+          config.progressUpdateIntervalMs,
+          logger,
+        );
+        const task = createSoundCloudTask({
+          id: taskId,
+          ownerId: userId,
+          chatId,
+          url: link.soundcloud.url,
+          metadata,
+          config,
+          sender,
+          logger,
+          workRoot,
+        });
+        startTask({ chatId, provider: 'soundcloud', selection, metadata: metadataBox, status }, task);
+        return;
+      }
+
       const metadata = await fetchVideoMetadata({
         config: { ...config, workDir: workRoot },
-        videoId: parsed.value.videoId,
+        videoId: link.youtube.videoId,
       });
       logger.info('metadata_ready', {
         chatId,
-        videoId: parsed.value.videoId,
+        videoId: link.youtube.videoId,
         durationSec: metadata.durationSec,
         formats: metadata.formats.length,
       });
@@ -187,21 +246,30 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
       selections.set(placeholder.message_id, {
         chatId,
         userId,
-        videoId: parsed.value.videoId,
+        videoId: link.youtube.videoId,
         metadata,
       });
       await ctx.api.editMessageText(
         chatId,
         placeholder.message_id,
-        renderVideoInfo(metadata, qualities, hasAudio, parsed.value.hadPlaylistParam, config.uploadLimitBytes),
-        { parse_mode: 'HTML', reply_markup: formatSelectionKeyboard(parsed.value.videoId, qualities, hasAudio) },
+        renderVideoInfo(metadata, qualities, hasAudio, link.youtube.hadPlaylistParam, config.uploadLimitBytes),
+        { parse_mode: 'HTML', reply_markup: formatSelectionKeyboard(link.youtube.videoId, qualities, hasAudio) },
       );
     } catch (error) {
-      logger.warn('metadata_failed', { chatId, videoId: parsed.value.videoId, error });
+      logger.warn(isSoundCloud ? 'soundcloud_metadata_failed' : 'metadata_failed', {
+        chatId,
+        ...(link.provider === 'soundcloud'
+          ? { trackUrl: link.soundcloud.url }
+          : { videoId: link.youtube.videoId }),
+        error,
+      });
       ignoreFailure(
-        ctx.api.editMessageText(chatId, placeholder.message_id, renderError(userMessageForError(error, config.uploadLimitBytes)), {
-          parse_mode: 'HTML',
-        }),
+        ctx.api.editMessageText(
+          chatId,
+          placeholder.message_id,
+          renderError(userMessageForError(error, config.uploadLimitBytes, link.provider)),
+          { parse_mode: 'HTML' },
+        ),
       );
     } finally {
       busyChats.delete(chatId);
@@ -287,7 +355,7 @@ export async function startBot(options: StartBotOptions): Promise<BotRuntime> {
       },
     });
 
-    startTask({ chatId, selection: action.selection, metadata, status }, task);
+    startTask({ chatId, provider: 'youtube', selection: action.selection, metadata, status }, task);
     await ctx.answerCallbackQuery();
   });
 

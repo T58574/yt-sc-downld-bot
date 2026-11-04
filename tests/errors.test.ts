@@ -8,6 +8,7 @@ import {
   ToolNotFoundError,
   UnsupportedVideoError,
   classifyYtDlpFailure,
+  soundCloudFailureMessage,
   userMessageForError,
 } from '../src/errors.js';
 
@@ -59,6 +60,20 @@ describe('userMessageForError', () => {
   it('не раскрывает детали неизвестной ошибки', () => {
     expect(userMessageForError(new Error('internal stack'), LIMIT)).toContain('логах сервера');
     expect(userMessageForError('строка', LIMIT)).not.toContain('строка');
+  });
+
+  it('для SoundCloud не советует выбирать качество и не упоминает YouTube', () => {
+    const tooLarge = userMessageForError(new FileTooLargeError(120 * MIB, LIMIT), LIMIT, 'soundcloud');
+    expect(tooLarge).toContain('120.0 МиБ');
+    expect(tooLarge).not.toContain('качество');
+
+    const unsupported = new ExternalCommandError('yt-dlp', 1, 'ERROR: Unsupported URL');
+    const message = userMessageForError(unsupported, LIMIT, 'soundcloud');
+    expect(message).toContain('SoundCloud');
+    expect(message).not.toContain('YouTube');
+
+    expect(soundCloudFailureMessage('network')).toContain('SoundCloud');
+    expect(soundCloudFailureMessage('unknown')).toContain('логах сервера');
   });
 });
 

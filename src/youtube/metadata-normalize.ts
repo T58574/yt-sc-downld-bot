@@ -61,7 +61,23 @@ function normalizeFormat(raw: RawFormat): MediaFormat | null {
   return format;
 }
 
-export function normalizeMetadata(rawValue: unknown, expectedVideoId: string): VideoMetadata {
+function metadataId(rawValue: unknown, expectedId: string | undefined): string {
+  if (expectedId !== undefined) return expectedId;
+  if (typeof rawValue === 'string' || typeof rawValue === 'number') {
+    const cleaned = String(rawValue)
+      .trim()
+      .replace(/[^A-Za-z0-9_-]/g, '')
+      .slice(0, 64);
+    if (cleaned) return cleaned;
+  }
+  throw new UnsupportedVideoError('invalid_metadata', 'yt-dlp не вернул ID медиа');
+}
+
+export function normalizeMetadata(
+  rawValue: unknown,
+  expectedVideoId?: string,
+  fallbackTitle = 'YouTube video',
+): VideoMetadata {
   if (typeof rawValue !== 'object' || rawValue === null) {
     throw new UnsupportedVideoError('invalid_metadata', 'Пустой ответ yt-dlp');
   }
@@ -69,9 +85,10 @@ export function normalizeMetadata(rawValue: unknown, expectedVideoId: string): V
   if (raw._type === 'playlist' || Array.isArray(raw.entries)) {
     throw new UnsupportedVideoError('playlist', 'yt-dlp вернул playlist');
   }
-  if (raw.id !== expectedVideoId) {
+  if (expectedVideoId !== undefined && raw.id !== expectedVideoId) {
     throw new UnsupportedVideoError('invalid_metadata', 'ID видео не совпал с ссылкой');
   }
+  const id = metadataId(raw.id, expectedVideoId);
   if (raw.is_live === true || raw.live_status === 'is_live' || raw.live_status === 'is_upcoming') {
     throw new UnsupportedVideoError('live', 'Прямые трансляции не поддерживаются');
   }
@@ -89,8 +106,8 @@ export function normalizeMetadata(rawValue: unknown, expectedVideoId: string): V
 
   const duration = finiteNumber(raw.duration);
   return {
-    id: expectedVideoId,
-    title: textValue(raw.title, 300) ?? 'YouTube video',
+    id,
+    title: textValue(raw.title, 300) ?? fallbackTitle,
     ...(duration !== undefined ? { durationSec: Math.floor(duration) } : {}),
     ...(textValue(raw.uploader, 200) ? { uploader: textValue(raw.uploader, 200) } : {}),
     formats,

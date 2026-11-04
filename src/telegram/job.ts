@@ -1,9 +1,9 @@
 import type { AppConfig } from '../config.js';
 import { FileTooLargeError, TaskCancelledError, UnsupportedVideoError } from '../errors.js';
 import type { Logger } from '../logger.js';
-import type { MediaSelection, Task, TaskContext } from '../types.js';
+import type { MediaSelection, Task, TaskContext, VideoMetadata } from '../types.js';
 import { createTaskDir, removeTaskDir } from '../files.js';
-import { downloadMedia } from '../ytdlp/download.js';
+import { downloadMedia, downloadSoundCloudAudio } from '../ytdlp/download.js';
 import { fetchVideoMetadata } from '../ytdlp/metadata.js';
 import { ytdlpNetworkOptions } from '../ytdlp/args.js';
 import { buildVideoQualities, AUDIO_FORMAT_SELECTOR } from '../youtube/formats.js';
@@ -24,7 +24,7 @@ export interface DownloadTaskFactoryOptions {
   sender: MediaSender;
   logger: Logger;
   workRoot: string;
-  onMetadata?: (metadata: import('../types.js').VideoMetadata) => void;
+  onMetadata?: (metadata: VideoMetadata) => void;
 }
 
 export function createDownloadTask(options: DownloadTaskFactoryOptions): Task {
@@ -105,6 +105,77 @@ export function createDownloadTask(options: DownloadTaskFactoryOptions): Task {
           },
         });
         logger.info('task_uploaded', { taskId: id, videoId, sizeBytes: file.sizeBytes, extension: file.extension });
+      } finally {
+        await removeTaskDir(taskDir, workRoot).catch((error: unknown) => {
+          logger.warn('task_dir_cleanup_failed', { taskId: id, error });
+        });
+      }
+    },
+  };
+}
+
+export interface SoundCloudTaskFactoryOptions {
+  id: string;
+  ownerId: number;
+  chatId: number;
+  url: string;
+  metadata: VideoMetadata;
+  config: AppConfig;
+  sender: MediaSender;
+  logger: Logger;
+  workRoot: string;
+}
+
+/**
+ * SoundCloud-трек не предлагает выбор формата: сразу качаем аудио и отдаём mp3.
+ * Метаданные уже получены в обработчике ссылки, второй запрос к SoundCloud не нужен.
+ */
+export function createSoundCloudTask(options: SoundCloudTaskFactoryOptions): Task {
+  const { id, ownerId, chatId, url, metadata, config, sender, logger, workRoot } = options;
+  const selection: MediaSelection = { kind: 'audio' };
+
+  return {
+    id,
+    ownerId,
+    label: `soundcloud/${metadata.id}/mp3`,
+    run: async (context: TaskContext) => {
+      throwIfAborted(context.signal);
+      const taskDir = await createTaskDir(workRoot);
+      logger.info('soundcloud_task_dir_created', { taskId: id, trackId: metadata.id });
+      try {
+        const file = await downloadSoundCloudAudio({
+          url,
+          workDir: taskDir,
+          nodePath: process.execPath,
+          ytdlpBin: config.ytdlpBin,
+          ...(config.ffmpegLocation ? { ffmpegLocation: config.ffmpegLocation } : {}),
+          network: ytdlpNetworkOptions(config),
+          timeoutMs: config.downloadTimeoutMs,
+          signal: context.signal,
+          onProgress: context.report,
+        });
+        throwIfAborted(context.signal);
+
+        if (file.sizeBytes > config.uploadLimitBytes) {
+          throw new FileTooLargeError(file.sizeBytes, config.uploadLimitBytes);
+        }
+
+        context.report({ stage: 'uploading' });
+        await sender.send({
+          chatId,
+          file,
+          metadata,
+          selection,
+          signal: context.signal,
+          onProgress: (percent) => {
+            context.report({ stage: 'uploading', percent });
+          },
+        });
+        logger.info('soundcloud_task_uploaded', {
+          taskId: id,
+          trackId: metadata.id,
+          sizeBytes: file.sizeBytes,
+        });
       } finally {
         await removeTaskDir(taskDir, workRoot).catch((error: unknown) => {
           logger.warn('task_dir_cleanup_failed', { taskId: id, error });

@@ -5,8 +5,7 @@ import { normalizeMetadata } from '../youtube/metadata-normalize.js';
 import { networkArgs, ytdlpNetworkOptions, type YtDlpNetworkOptions } from './args.js';
 import { runProcess } from './process.js';
 
-export function buildMetadataArgs(
-  videoId: string,
+function commonMetadataArgs(
   nodePath: string,
   ffmpegLocation?: string,
   network?: YtDlpNetworkOptions,
@@ -28,9 +27,30 @@ export function buildMetadataArgs(
     '--no-cache-dir',
     ...networkArgs(network),
     ...(ffmpegLocation ? ['--ffmpeg-location', ffmpegLocation] : []),
+  ];
+}
+
+export function buildMetadataArgs(
+  videoId: string,
+  nodePath: string,
+  ffmpegLocation?: string,
+  network?: YtDlpNetworkOptions,
+): string[] {
+  return [
+    ...commonMetadataArgs(nodePath, ffmpegLocation, network),
     '--dump-single-json',
     `https://www.youtube.com/watch?v=${videoId}`,
   ];
+}
+
+/** Тот же запрос метаданных, но по произвольному URL (SoundCloud и т.п.). */
+export function buildUrlMetadataArgs(
+  url: string,
+  nodePath: string,
+  ffmpegLocation?: string,
+  network?: YtDlpNetworkOptions,
+): string[] {
+  return [...commonMetadataArgs(nodePath, ffmpegLocation, network), '--dump-single-json', url];
 }
 
 function parseJson(stdout: string): unknown {
@@ -81,4 +101,31 @@ export async function fetchVideoMetadata(options: FetchMetadataOptions): Promise
   });
   const raw = parseJson(result.stdout);
   return normalizeMetadata(raw, options.videoId);
+}
+
+export interface FetchUrlMetadataOptions {
+  config: FetchMetadataOptions['config'];
+  url: string;
+  signal?: AbortSignal;
+  fallbackTitle?: string;
+}
+
+/** Метаданные по URL, когда ID заранее неизвестен (SoundCloud). */
+export async function fetchUrlMetadata(options: FetchUrlMetadataOptions): Promise<VideoMetadata> {
+  const args = buildUrlMetadataArgs(
+    options.url,
+    process.execPath,
+    options.config.ffmpegLocation,
+    ytdlpNetworkOptions(options.config),
+  );
+  const result = await runProcess({
+    bin: options.config.ytdlpBin,
+    args,
+    cwd: options.config.workDir,
+    timeoutMs: options.config.metadataTimeoutMs,
+    ...(options.signal ? { signal: options.signal } : {}),
+    maxStdoutBytes: 32 * 1024 * 1024,
+  });
+  const raw = parseJson(result.stdout);
+  return normalizeMetadata(raw, undefined, options.fallbackTitle ?? 'SoundCloud track');
 }

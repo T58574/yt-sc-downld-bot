@@ -76,4 +76,24 @@ describe('normalizeMetadata', () => {
     const metadata = normalizeMetadata(raw({ formats: [{ format_id: '137', ext: 'mp4', vcodec: 'avc1', acodec: 'none' }] }), VIDEO_ID);
     expect(metadata.hasAudio).toBe(false);
   });
+
+  it('нормализует метаданные без ожидаемого ID (SoundCloud)', () => {
+    const metadata = normalizeMetadata(
+      raw({
+        id: 1396707733,
+        title: null,
+        formats: [{ format_id: 'hls_aac_96k', ext: 'm4a', vcodec: 'none', acodec: 'mp4a.40.2', abr: 96 }],
+      }),
+      undefined,
+      'SoundCloud track',
+    );
+    expect(metadata.id).toBe('1396707733');
+    expect(metadata.title).toBe('SoundCloud track');
+    expect(metadata.hasAudio).toBe(true);
+  });
+
+  it('очищает ID от небезопасных символов и требует непустой ID', () => {
+    expect(normalizeMetadata(raw({ id: '../<script>' }), undefined).id).toBe('script');
+    expect(() => normalizeMetadata(raw({ id: '///' }), undefined)).toThrow(/ID медиа/);
+  });
 });

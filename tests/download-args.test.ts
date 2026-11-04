@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildDownloadArgs } from '../src/ytdlp/download.js';
-import { buildMetadataArgs } from '../src/ytdlp/metadata.js';
+import {
+  SOUNDCLOUD_AUDIO_QUALITY,
+  SOUNDCLOUD_AUDIO_SELECTOR,
+  buildDownloadArgs,
+  buildSoundCloudDownloadArgs,
+} from '../src/ytdlp/download.js';
+import { buildMetadataArgs, buildUrlMetadataArgs } from '../src/ytdlp/metadata.js';
 import { AUDIO_FORMAT_SELECTOR, buildVideoQualities, formatSelector } from '../src/youtube/formats.js';
 import type { MediaSelection, VideoMetadata } from '../src/types.js';
 
@@ -115,6 +120,52 @@ describe('buildMetadataArgs', () => {
     expect(args).toContain('--no-cache-dir');
     expect(args[args.indexOf('--js-runtimes') + 1]).toBe('node:/usr/local/bin/node');
     expect(args[args.length - 1]).toBe(`https://www.youtube.com/watch?v=${VIDEO_ID}`);
+  });
+
+  it('умеет запрашивать метаданные по URL SoundCloud', () => {
+    const url = 'https://soundcloud.com/artist/track';
+    const args = buildUrlMetadataArgs(url, '/usr/local/bin/node');
+    expect(args).toContain('--dump-single-json');
+    expect(args).toContain('--no-playlist');
+    expect(args[args.length - 1]).toBe(url);
+  });
+});
+
+describe('buildSoundCloudDownloadArgs', () => {
+  const URL = 'https://soundcloud.com/artist/track';
+
+  function buildSoundCloud(overrides: { url?: string; selector?: string } = {}): string[] {
+    return buildSoundCloudDownloadArgs({
+      url: overrides.url ?? URL,
+      ...(overrides.selector !== undefined ? { selector: overrides.selector } : {}),
+      workDir: WORK_DIR,
+      nodePath: '/usr/local/bin/node',
+    });
+  }
+
+  it('качает лучший аудиопоток и конвертирует в mp3 без выбора качества', () => {
+    const args = buildSoundCloud();
+    expect(args[args.indexOf('--format') + 1]).toBe(SOUNDCLOUD_AUDIO_SELECTOR);
+    expect(args).toContain('--extract-audio');
+    expect(args[args.indexOf('--audio-format') + 1]).toBe('mp3');
+    expect(args[args.indexOf('--audio-quality') + 1]).toBe(SOUNDCLOUD_AUDIO_QUALITY);
+    expect(args).toContain('--no-playlist');
+    expect(args).not.toContain('--merge-output-format');
+    expect(args[args.length - 1]).toBe(URL);
+  });
+
+  it('держит временные файлы внутри каталога задачи', () => {
+    const args = buildSoundCloud();
+    expect(args[args.indexOf('--paths') + 1]).toBe(`temp:${WORK_DIR}`);
+    expect(args[args.indexOf('--output') + 1]).toBe(`${WORK_DIR}/%(id)s.%(ext)s`);
+  });
+
+  it('не пропускает чужие URL и подозрительные селекторы', () => {
+    expect(() => buildSoundCloud({ url: 'https://youtube.com/watch?v=dQw4w9WgXcQ' })).toThrow(/SoundCloud/);
+    expect(() => buildSoundCloud({ url: 'file:///etc/passwd' })).toThrow(/SoundCloud/);
+    for (const selector of ['', 'best; rm -rf /', 'best$(whoami)']) {
+      expect(() => buildSoundCloud({ selector })).toThrow(/селектор/);
+    }
   });
 });
 

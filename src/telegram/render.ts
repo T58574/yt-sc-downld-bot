@@ -131,7 +131,7 @@ export function renderFailed(metadata: VideoMetadata | undefined, selection: Med
 export function renderStartMessage(uploadLimitBytes: number): string {
   return [
     '👋 <b>YouTube Download Bot</b>',
-    'Пришлите ссылку на отдельное видео YouTube — предложу MP3 или MP4 с выбором качества.',
+    'Пришлите ссылку на видео YouTube или трек SoundCloud: для YouTube предложу MP3 или MP4 с выбором качества, трек SoundCloud пришлю в MP3.',
     '',
     renderHelpMessage(uploadLimitBytes),
   ].join('\n');
@@ -144,8 +144,8 @@ export function renderQueueFull(): string {
 export function renderHelpMessage(uploadLimitBytes: number): string {
   return [
     '<b>Как пользоваться</b>',
-    '1. Пришлите ссылку на отдельное видео YouTube (/watch, /shorts, youtu.be).',
-    '2. Выберите MP3 или вариант MP4.',
+    '1. Пришлите ссылку на отдельное видео YouTube (/watch, /shorts, youtu.be) или на трек SoundCloud (soundcloud.com/…, on.soundcloud.com/…).',
+    '2. Для YouTube выберите MP3 или вариант MP4. Трек SoundCloud скачается сразу в MP3.',
     '3. Следите за прогрессом; если передумали — нажмите «Отмена».',
     '',
     `Плейлисты и прямые трансляции не поддерживаются. Лимит отправки в Telegram: ${formatBytes(uploadLimitBytes)}.`,

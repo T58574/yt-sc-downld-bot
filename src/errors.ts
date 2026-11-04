@@ -192,13 +192,57 @@ export function ytDlpFailureMessage(kind: YtDlpFailureKind): string {
   }
 }
 
-export function userMessageForError(error: unknown, uploadLimitBytes: number): string {
+export function soundCloudFailureMessage(kind: YtDlpFailureKind): string {
+  switch (kind) {
+    case 'unavailable':
+      return 'Трек недоступен: удалён, скрыт или ограничен автором.';
+    case 'private':
+      return 'Это приватный трек, скачать его нельзя.';
+    case 'age_restricted':
+      return 'Трек имеет возрастное ограничение и недоступен без авторизации.';
+    case 'members_only':
+      return 'Трек доступен только подписчикам автора. Скачать его нельзя.';
+    case 'live':
+      return 'Прямые эфиры SoundCloud не поддерживаются.';
+    case 'unsupported':
+      return 'SoundCloud не отдал аудио для этой ссылки. Проверьте, что это отдельный трек, а не плейлист.';
+    case 'format_unavailable':
+      return 'Аудиопоток этого трека больше недоступен. Попробуйте позже.';
+    case 'too_large':
+      return 'Файл превышает допустимый размер для отправки в Telegram.';
+    case 'rate_limited':
+      return 'SoundCloud временно ограничил частоту запросов. Подождите несколько минут и попробуйте снова.';
+    case 'network':
+      return 'Сетевая ошибка при обращении к SoundCloud. Проверьте соединение на сервере и попробуйте позже.';
+    case 'conversion':
+      return 'Ошибка конвертации трека в MP3. Попробуйте ещё раз; если повторяется — проверьте ffmpeg в логах.';
+    case 'timeout':
+      return 'Операция заняла слишком много времени и была остановлена. Попробуйте более короткий трек.';
+    case 'cancelled':
+      return 'Задача отменена.';
+    case 'youtube_blocked':
+      return 'SoundCloud запросил подтверждение доступа. Попробуйте позже.';
+    case 'unknown':
+      return 'Не удалось скачать трек из SoundCloud. Попробуйте позже; подробности есть в логах сервера.';
+  }
+}
+
+export function userMessageForError(
+  error: unknown,
+  uploadLimitBytes: number,
+  provider: 'youtube' | 'soundcloud' = 'youtube',
+): string {
+  const failureMessage = provider === 'soundcloud' ? soundCloudFailureMessage : ytDlpFailureMessage;
   if (error instanceof FileTooLargeError) {
     const prefix = error.estimated ? 'Ожидаемый размер файла' : 'Файл весит';
-    return `${prefix} ${formatBytes(error.sizeBytes)}, а Telegram принимает не больше ${formatBytes(uploadLimitBytes)}. Выберите качество ниже или аудио MP3.`;
+    const suffix =
+      provider === 'soundcloud'
+        ? 'Лимит отправки в Telegram меньше.'
+        : 'Выберите качество ниже или аудио MP3.';
+    return `${prefix} ${formatBytes(error.sizeBytes)}, а Telegram принимает не больше ${formatBytes(uploadLimitBytes)}. ${suffix}`;
   }
   if (error instanceof TelegramSendError) return error.userMessage;
-  if (error instanceof ProcessTimeoutError) return ytDlpFailureMessage('timeout');
+  if (error instanceof ProcessTimeoutError) return failureMessage('timeout');
   if (error instanceof ToolNotFoundError) {
     return `На сервере не найден ${error.binary}. Проверьте установку yt-dlp, ffmpeg и ffprobe.`;
   }
@@ -206,16 +250,16 @@ export function userMessageForError(error: unknown, uploadLimitBytes: number): s
     return 'После обработки не нашёлся готовый файл. Попробуйте ещё раз или выберите другое качество.';
   }
   if (error instanceof UnsupportedVideoError) {
-    if (error.kind === 'live') return ytDlpFailureMessage('live');
+    if (error.kind === 'live') return failureMessage('live');
     if (error.kind === 'no_video') return 'Для этого видео нет MP4-вариантов. Можно скачать только MP3.';
     if (error.kind === 'no_audio') return 'Для этого видео нет аудиодорожки. MP3 недоступен.';
-    if (error.kind === 'format_unavailable') return ytDlpFailureMessage('format_unavailable');
+    if (error.kind === 'format_unavailable') return failureMessage('format_unavailable');
     return 'Не удалось разобрать данные видео. Попробуйте другую ссылку.';
   }
   if (error instanceof ExternalCommandError) {
-    return ytDlpFailureMessage(classifyYtDlpFailure(error.stderrTail));
+    return failureMessage(classifyYtDlpFailure(error.stderrTail));
   }
-  return ytDlpFailureMessage('unknown');
+  return failureMessage('unknown');
 }
 
 export function describeTelegramError(error: unknown): string {

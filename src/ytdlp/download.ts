@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MediaSelection, ProgressUpdate } from '../types.js';
 import { OutputFileMissingError } from '../errors.js';
+import { isSoundCloudMediaUrl } from '../soundcloud/url.js';
 import { findOutputFile } from '../files.js';
 import { networkArgs, type YtDlpNetworkOptions } from './args.js';
 import { runProcess } from './process.js';
@@ -12,6 +13,14 @@ const SELECTOR_PATTERN = /^[-a-zA-Z0-9_<>=^.,:\[\]()+*/|]+$/;
 const MAX_SELECTOR_LENGTH = 512;
 const PROGRESS_TEMPLATE =
   'download:PROGRESS|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s';
+
+/** Сначала пробуем нативный mp3, иначе берём лучший аудиопоток и кодируем в mp3. */
+export const SOUNDCLOUD_AUDIO_SELECTOR = 'bestaudio[ext=mp3]/bestaudio/best';
+/**
+ * SoundCloud отдаёт AAC 96–160 kbps, поэтому V0 только раздувает файл.
+ * 192K сохраняет качество источника без лишнего размера.
+ */
+export const SOUNDCLOUD_AUDIO_QUALITY = '192K';
 
 interface StreamProgress {
   downloaded: number;
@@ -97,23 +106,15 @@ export function createProgressAggregator(expectedStreams = 1): (update: Progress
   };
 }
 
-export interface BuildDownloadArgsOptions {
-  videoId: string;
-  selection: MediaSelection;
-  selector: string;
+interface CommonDownloadArgsOptions {
   workDir: string;
   nodePath: string;
-  ytdlpBin: string;
   ffmpegLocation?: string;
   network?: YtDlpNetworkOptions;
 }
 
-export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
-  if (!VIDEO_ID_PATTERN.test(options.videoId)) throw new Error('Некорректный ID видео');
-  if (!options.selector || options.selector.length > MAX_SELECTOR_LENGTH || !SELECTOR_PATTERN.test(options.selector)) {
-    throw new Error('Некорректный селектор формата');
-  }
-  const args = [
+function commonDownloadArgs(options: CommonDownloadArgsOptions): string[] {
+  return [
     '--ignore-config',
     '--no-playlist',
     '--color',
@@ -143,7 +144,26 @@ export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
     ...networkArgs(options.network),
     ...(options.ffmpegLocation ? ['--ffmpeg-location', options.ffmpegLocation] : []),
   ];
+}
 
+function validateSelector(selector: string): void {
+  if (!selector || selector.length > MAX_SELECTOR_LENGTH || !SELECTOR_PATTERN.test(selector)) {
+    throw new Error('Некорректный селектор формата');
+  }
+}
+
+export interface BuildDownloadArgsOptions extends CommonDownloadArgsOptions {
+  videoId: string;
+  selection: MediaSelection;
+  selector: string;
+  ytdlpBin: string;
+}
+
+export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
+  if (!VIDEO_ID_PATTERN.test(options.videoId)) throw new Error('Некорректный ID видео');
+  validateSelector(options.selector);
+
+  const args = commonDownloadArgs(options);
   if (options.selection.kind === 'audio') {
     args.push('--format', options.selector, '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
   } else {
@@ -152,6 +172,30 @@ export function buildDownloadArgs(options: BuildDownloadArgsOptions): string[] {
 
   args.push(`https://www.youtube.com/watch?v=${options.videoId}`);
   return args;
+}
+
+export interface BuildSoundCloudArgsOptions extends CommonDownloadArgsOptions {
+  url: string;
+  selector?: string;
+}
+
+/** SoundCloud всегда отдаём как mp3: без выбора качества и без MP4. */
+export function buildSoundCloudDownloadArgs(options: BuildSoundCloudArgsOptions): string[] {
+  if (!isSoundCloudMediaUrl(options.url)) throw new Error('Некорректный URL SoundCloud');
+  const selector = options.selector ?? SOUNDCLOUD_AUDIO_SELECTOR;
+  validateSelector(selector);
+
+  return [
+    ...commonDownloadArgs(options),
+    '--format',
+    selector,
+    '--extract-audio',
+    '--audio-format',
+    'mp3',
+    '--audio-quality',
+    SOUNDCLOUD_AUDIO_QUALITY,
+    options.url,
+  ];
 }
 
 export interface DownloadMediaOptions extends BuildDownloadArgsOptions {
@@ -165,6 +209,13 @@ export interface DownloadMediaOptions extends BuildDownloadArgsOptions {
   onProgress: (update: ProgressUpdate) => void;
 }
 
+export interface DownloadSoundCloudOptions extends BuildSoundCloudArgsOptions {
+  ytdlpBin: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  onProgress: (update: ProgressUpdate) => void;
+}
+
 export interface DownloadedFile {
   path: string;
   sizeBytes: number;
@@ -175,6 +226,31 @@ export async function downloadMedia(options: DownloadMediaOptions): Promise<Down
   const extension = options.selection.kind === 'audio' ? 'mp3' : 'mp4';
   const args = buildDownloadArgs(options);
   const aggregate = createProgressAggregator(options.expectedStreams ?? 1);
+  options.onProgress({ stage: 'downloading' });
+
+  await runProcess({
+    bin: options.ytdlpBin,
+    args,
+    cwd: options.workDir,
+    timeoutMs: options.timeoutMs,
+    ...(options.signal ? { signal: options.signal } : {}),
+    onLine: (line) => {
+      const update = parseYtDlpLine(line);
+      if (update) options.onProgress(aggregate(update));
+    },
+    maxStdoutBytes: 4 * 1024 * 1024,
+  });
+
+  const outputPath = await findOutputFile(options.workDir, extension);
+  if (!outputPath) throw new OutputFileMissingError(extension);
+  const info = await stat(outputPath);
+  return { path: outputPath, sizeBytes: info.size, extension };
+}
+
+export async function downloadSoundCloudAudio(options: DownloadSoundCloudOptions): Promise<DownloadedFile> {
+  const extension = 'mp3';
+  const args = buildSoundCloudDownloadArgs(options);
+  const aggregate = createProgressAggregator(1);
   options.onProgress({ stage: 'downloading' });
 
   await runProcess({

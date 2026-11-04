@@ -1,12 +1,13 @@
 # YouTube Download Bot
 
-A TypeScript Telegram bot that downloads **single YouTube videos** and sends them as **MP3** or **MP4** (H.264/AAC) with quality selection, real `yt-dlp` progress, and task cancellation.
+A TypeScript Telegram bot that downloads **single YouTube videos** (MP3 or MP4 H.264/AAC with quality selection) and **SoundCloud tracks** (straight to MP3), with real `yt-dlp` progress and task cancellation.
 
 [Русская версия →](README.md)
 
 ## Features
 
 - accepts `youtube.com/watch?v=…`, `youtu.be/…`, `/shorts/…`, `/embed/…`, `/v/…` links; the `list=` parameter is ignored — only the linked video is downloaded;
+- accepts SoundCloud `soundcloud.com/artist/track` and short `on.soundcloud.com/…` links — tracks are downloaded straight to MP3, with no quality picker and no MP4;
 - format selection via inline buttons: MP3 (LAME V0) or MP4 H.264/AAC with up to 8 quality options;
 - progress from actual `yt-dlp` output: percentages only when the exact size is known, otherwise downloaded bytes; speed and ETA come from `yt-dlp` as well;
 - cancellation button: the `yt-dlp` process tree is stopped, temporary files are removed;
@@ -238,6 +239,7 @@ After updating `yt-dlp`, run a couple of videos manually: YouTube changes more o
 ### Downloading
 
 - Single videos only: `/playlist` and URLs with `list=` are rejected, so are `/live/…` streams.
+- SoundCloud: individual tracks only. Playlists and sets (`/artist/sets/…`) are rejected. SoundCloud currently serves AAC/HLS audio, so producing MP3 requires one ffmpeg transcode; if a track ever exposes a native MP3 stream, `yt-dlp` uses it without re-encoding.
 - MP4 is H.264 (avc1) + m4a only: AV1/VP9 are deliberately not offered for maximum Telegram client compatibility. If a video has no H.264 variant and no audio, the bot says there is nothing to download.
 - Private, age-restricted and region-locked videos, as well as "confirm you're not a bot" checks, may be unavailable: by default the bot passes neither cookies nor PO tokens (intentionally — cookies grant account access and have no place in a shared service). If the bot check gets in the way, see "Protecting against YouTube blocks".
 - Size estimates are approximate: they come from `filesize`/`filesize_approx`, otherwise from bitrate and duration, and are shown with a "~". A reliable estimate blocks the download up front; the final decision is made on the actual file size.
@@ -263,10 +265,12 @@ src/
   logger.ts      JSON logs with token/secret redaction
   errors.ts      typed errors and user-facing messages
   format.ts      byte/duration formatting, HTML escaping
+  links.ts       link provider detection: YouTube or SoundCloud
   youtube/       URL parsing, format and quality selection, metadata normalization
+  soundcloud/    SoundCloud track URL parsing
   ytdlp/         safe yt-dlp process launch, progress and metadata parsing, tool checks
   telegram/      bot, handlers, message rendering, file sending, progress message
-tests/           14 unit test files (vitest)
+tests/           18 unit test files (vitest)
 deploy/          systemd unit
 ```
 
@@ -275,12 +279,12 @@ deploy/          systemd unit
 ## Tests
 
 ```bash
-npm test              # vitest run — 14 files, 124 tests
+npm test              # vitest run — 18 files, 171 tests
 npm run typecheck     # tsc --noEmit
 npm run typecheck:tests
 ```
 
-Covered: YouTube URL parsing, callback data and selection storage, ID-based access, queueing and cancellation, size estimates and format selectors, `yt-dlp` progress parsing (including estimates and two-stream MP4), message rendering, config parsing, log redaction, file handling, `yt-dlp` launch arguments, error mapping.
+Covered: YouTube and SoundCloud URL parsing, link provider detection, callback data and selection storage, ID-based access, queueing and cancellation, size estimates and format selectors, `yt-dlp` progress parsing (including estimates and two-stream MP4), message rendering, config parsing, log redaction, file handling, `yt-dlp` launch arguments, error mapping.
 
 ## Real-world sample run
 
