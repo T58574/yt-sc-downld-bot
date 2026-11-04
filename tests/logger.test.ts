@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLogger, redactText } from '../src/logger.js';
+import { createLogger, installConsoleRedaction, redactText } from '../src/logger.js';
 
 function collect(level: 'debug' | 'info' | 'warn' | 'error' = 'debug') {
   const lines: string[] = [];
@@ -15,6 +15,14 @@ describe('redactText', () => {
   it('скрывает токены ботов', () => {
     expect(redactText(`BOT_TOKEN=123456789:${'A'.repeat(35)}`)).toContain('[redacted-token]');
     expect(redactText(`BOT_TOKEN=123456789:${'A'.repeat(35)}`)).not.toContain('123456789:');
+  });
+
+  it('скрывает токен внутри URL Bot API', () => {
+    const token = `123456789:${'D'.repeat(35)}`;
+    const text = redactText(`request to https://api.telegram.org/bot${token}/getUpdates?offset=5 failed`);
+    expect(text).not.toContain(token);
+    expect(text).not.toContain('offset=5');
+    expect(text).toContain('[redacted-token]');
   });
 
   it('обрезает query-параметры ссылок', () => {
@@ -73,5 +81,37 @@ describe('createLogger', () => {
     const { logger, parsed } = collect();
     logger.info('deep', { a: { b: { c: { d: { e: { f: 1 } } } } } });
     expect(JSON.stringify(parsed()[0])).toContain('[truncated]');
+  });
+});
+
+describe('installConsoleRedaction', () => {
+  it('перехватывает прямой console.error grammY и вычищает токен', () => {
+    const token = `987654321:${'E'.repeat(35)}`;
+    const lines: string[] = [];
+    const target = {
+      error: (...args: unknown[]): void => {
+        lines.push(args.map(String).join(' '));
+      },
+    };
+    const restore = installConsoleRedaction(target);
+    target.error(
+      '[grammY runner] Error while fetching updates:',
+      new Error(`request to https://api.telegram.org/bot${token}/getUpdates failed`),
+    );
+    restore();
+
+    const output = lines.join('\n');
+    expect(output).not.toContain(token);
+    expect(output).toContain('[redacted-token]');
+    expect(output).toContain('[grammY runner]');
+  });
+
+  it('возвращает исходный обработчик', () => {
+    const original = (): void => undefined;
+    const target = { error: original };
+    const restore = installConsoleRedaction(target);
+    expect(target.error).not.toBe(original);
+    restore();
+    expect(target.error).toBe(original);
   });
 });

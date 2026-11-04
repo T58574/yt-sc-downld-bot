@@ -284,7 +284,7 @@ deploy/          systemd-юнит
 ## Тесты
 
 ```bash
-npm test              # vitest run — 18 файлов, 171 тест
+npm test              # vitest run — 18 файлов, 174 теста
 npm run typecheck     # tsc --noEmit
 npm run typecheck:tests
 ```

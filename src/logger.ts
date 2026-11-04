@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import type { LogLevel } from './types.js';
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
@@ -7,7 +8,7 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
   error: 40,
 };
 
-const TOKEN_PATTERN = /\b\d{5,15}:[A-Za-z0-9_-]{25,}\b/g;
+const TOKEN_PATTERN = /\d{5,15}:[A-Za-z0-9_-]{25,}/g;
 const URL_PATTERN = /https?:\/\/[^\s"'<>]+/g;
 const SECRET_KEY_PATTERN = /token|authorization|password|secret|cookie|api[_-]?key/i;
 
@@ -33,6 +34,27 @@ export function redactText(input: string): string {
   return input
     .replace(TOKEN_PATTERN, '[redacted-token]')
     .replace(URL_PATTERN, (rawUrl) => stripUrlDetails(rawUrl));
+}
+
+function redactConsoleArgument(value: unknown): string {
+  if (typeof value === 'string') return redactText(value);
+  if (value instanceof Error) return redactText(value.stack ?? `${value.name}: ${value.message}`);
+  return redactText(inspect(value, { depth: 6, breakLength: 120 }));
+}
+
+/**
+ * grammY runner и другие внутренние обработчики пишут ошибки напрямую в
+ * console.error. Оборачиваем его, чтобы токен из URL Bot API не утекал
+ * в journal/stderr мимо структурированного логгера.
+ */
+export function installConsoleRedaction(target: Pick<Console, 'error'> = console): () => void {
+  const original = target.error;
+  target.error = (...args: unknown[]): void => {
+    original.apply(target, args.map(redactConsoleArgument));
+  };
+  return () => {
+    target.error = original;
+  };
 }
 
 function sanitizeValue(value: unknown, key?: string, depth = 0): unknown {

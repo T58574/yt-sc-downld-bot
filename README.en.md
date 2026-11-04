@@ -279,7 +279,7 @@ deploy/          systemd unit
 ## Tests
 
 ```bash
-npm test              # vitest run — 18 files, 171 tests
+npm test              # vitest run — 18 files, 174 tests
 npm run typecheck     # tsc --noEmit
 npm run typecheck:tests
 ```

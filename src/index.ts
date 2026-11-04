@@ -1,7 +1,7 @@
 import { loadConfig, withBotApiLimit, type AppConfig } from './config.js';
 import { asError } from './errors.js';
 import { cleanupStaleTaskDirs, prepareWorkRoot } from './files.js';
-import { createLogger, redactText, type Logger } from './logger.js';
+import { createLogger, installConsoleRedaction, redactText, type Logger } from './logger.js';
 import { startBot, type BotRuntime } from './telegram/bot.js';
 import { createMtprotoClient, type MtprotoClient } from './telegram/mtproto-client.js';
 import { verifyTools } from './ytdlp/tools.js';
@@ -58,6 +58,7 @@ async function startMtproto(
 }
 
 async function main(): Promise<void> {
+  installConsoleRedaction();
   const config = loadConfig(process.env);
   const logger: Logger = createLogger(config.logLevel);
 
